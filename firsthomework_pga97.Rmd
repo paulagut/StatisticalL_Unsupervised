@@ -1,0 +1,619 @@
+---
+title: "FIRST HOMEWORK: Unsupervised learning"
+subtitle: "Bachelor in Data Science and Engineering"
+author: "Paula Gutiérrez Arroyo, G97"
+date: "November, 3rd 2022"
+output: 
+  html_document: 
+    css: aug_train.csv
+    theme: cerulean
+    highlight: tango
+    number_sections: no
+    toc: no
+    toc_depth: 1
+---
+
+
+```{r global_options, include=T, echo = F}
+knitr::opts_chunk$set(echo = T, warning=FALSE, message=FALSE)
+```
+
+## First Step: loading the libaries
+First of all, we will clean the workspace and load all the necessary libraries:
+```{r}
+rm(list=ls()) 
+library(naniar)
+library(mice)
+library(tidyverse)
+library(factoextra)
+library(GGally)
+library(xfun)
+library(rmarkdown)
+library(dplyr)
+library(ggplot2)
+library(cluster)
+library(dendextend)
+library(psych)
+library(tidyr)
+library(kernlab)
+library(mclust)
+library(NbClust)
+library(Amelia)
+library(corrplot)
+library(VIM)
+
+```
+
+# Introduction:
+The dataset we are going to use for this project is called **HR Analytics: Job Change of Data Scientists**. Basically, a company wants to hire a data scientist so they store the data for the most promising profiles, since they want to reduce training and costs for the long run. This dataset is designed to understand which factors lead to a person to leave their current job, they want to hire the person that is the most likely to stay in the company based on their stored data.
+The link to download the data can be found in the following link: [click here](https://www.kaggle.com/datasets/arashnic/hr-analytics-job-change-of-data-scientists)
+
+
+For this particular project, we are going to use the train dataset, since I consider it has more value and more variables to it than the other one (for instance the target column).
+
+```{r}
+setwd("~/UC3M/2nd year/statistical learning/archive")
+
+data = read.csv("aug_train.csv", header = T, na.strings = "")
+View(data)
+head(data)
+```
+
+## In depth into the database
+The features in the database are the following (they are mostly self-explanatory):
+* enrollee_id
+
+* city
+
+* city_development_index ->> the development the city where they are from has
+
+* gender
+
+* relevent_experience
+
+* enrolled_university
+
+* education_level
+
+* major_discipline
+
+* experience
+
+* company_size
+
+* company_type
+
+* last_new_job
+
+* training_hours
+
+* target->> (0) not looking for a job change (1)looking for a job change
+
+Now, let's dive into the dataset.
+```{r}
+str(data)
+```
+
+We are going to change the types to mostly factor so we can work on them better.
+
+```{r}
+data$city = as.factor(data$city)
+data$gender = as.factor(data$gender)
+data$relevent_experience = as.factor(data$relevent_experience)
+data$enrolled_university = as.factor(data$enrolled_university)
+data$education_level  = as.factor(data$education_level)
+data$major_discipline = as.factor(data$major_discipline)
+data$experience = as.factor(data$experience)
+data$company_size = as.factor(data$company_size)
+data$last_new_job = as.factor(data$last_new_job)
+data$training_hours = as.integer(data$training_hours)
+data$target = as.factor(data$target)
+```
+
+There are some values in the company_size variable that are not in the right format, so let's change it.
+
+```{r}
+data$company_size = gsub("/","-",data$company_size)
+```
+
+# Data preprocessing:
+Let's see our NA's and plot them so we can inspect them and see what to do to fix it.
+
+```{r}
+sum(is.na(data))
+```
+
+We have a lot of missing values! Let's see them graphically.
+
+```{r}
+hist(rowMeans(is.na(data)))
+```
+
+```{r}
+barplot(colMeans(is.na(data)), las=2)
+```
+
+```{r}
+aggr(data, numbers = TRUE, sortVars = TRUE, labels = names(data),
+     cex.axis = .7, gap = 1, ylab= c('Missing data','Pattern'))
+
+```
+
+We checked what we already knew, that there a lot of missing values in a lot of different variables! 
+
+```{r}
+gg_miss_upset(data)
+```
+
+  The upset plot shows the combination of missings, by default choosing the 5 variables with the most missing values, and then orders them by the size of the missing values in that set. 
+  Basically, we can see that we have the most NAs where we have more observatoins (in company_size and company_type), whereas we get the minimal NAs in education_level where we have less observations, it makes more sense.
+  Let's see exactly how many NAs are in each variable and plot it
+  
+```{r}
+gender = sum(is.na(data$gender))
+en_uni = sum(is.na(data$enrolled_university))
+ed_lvl = sum(is.na(data$education_level))
+m_disc = sum(is.na(data$major_discipline))
+exp = sum(is.na(data$experience))
+com__size = sum(is.na(data$company_size))
+com_type = sum(is.na(data$company_type))
+job = sum(is.na(data$last_new_job))
+
+```
+
+```{r}
+null_df = data.frame(variable=c("enrrollee_id", "city", "gender",
+                                "city_development_index", "relevent_experience","enrolled_university","education_level",
+                                "major_discipline", "experience", "company_size", "company_type", "last_new_job",
+                                "training_hours", "target"),
+total_null = c(0, 0, 4508, 0,0, 386, 460, 2813, 65, 5938, 6140,423,0,0))
+
+null_df
+```
+
+```{r}
+null_df$variable = factor(null_df$variable,
+                          levels = null_df$variable[order(null_df$total_null,decreasing = TRUE)])
+
+ggplot(null_df,aes(x=variable,y=total_null))+ geom_bar(stat = "identity", col = "#99FF99", fill = "#CCFF99")+ theme(axis.text.x = element_text(angle = 90, hjust =1, vjust = 0.5))+
+  geom_label(aes(label = total_null, size = NULL), nudge_y = 0.6)+
+  theme(plot.title = element_text(hjust = 0.6))+
+  ggtitle("Total NAs by col")+
+  xlab("Missing values")
+```
+
+  Also did the missmap and got 12% of missing observations...let's fix it by replacing the NAs for the average of the variable where is missing. Otherwise, we would miss a lot of information and valuable data to make the unsupervised learning to begin with. (And it was time and power consuming).
+  
+```{r}
+data$city_development_index[which(is.na(data$city_development_index))] = mean(data$city_development_index, na.rm = TRUE)
+data$gender[which(is.na(data$gender))] = "Male"
+data$company_size[which(is.na(data$company_size))] = "50-99"
+data$relevent_experience[which(is.na(data$relevent_experience))] = "No relevent experience"
+data$enrolled_university[which(is.na(data$enrolled_university))] = "no_enrollment"
+data$education_level[which(is.na(data$education_level))] = "Graduate"
+data$major_discipline[which(is.na(data$major_discipline))] = "STEM"
+data$experience[which(is.na(data$experience))] = ">20"
+data$last_new_job[which(is.na(data$last_new_job))] = 1
+data$training_hours[which(is.na(data$training_hours))] = mean(data$training_hours, na.rm = TRUE)
+
+sum(data$target == 0)
+sum(data$target == 1)
+data$target[which(is.na(data$target))] = 0
+```
+
+  Now, we are going to remove those variables which we consider not relevant, such as *city*, *enrolle_id* and the *company_type*. We see that there are no NAs left.
+
+```{r}
+data = select(data,-enrollee_id, -city,-company_type)
+```
+
+```{r}
+sum(is.na(data))
+```
+
+# Visualization tools to get insights before the tools
+  Let's get the insight of what is going on in our data.
+  First of all, we can see that there are way more men than any other gender (about 90%).
+  
+```{r}
+sum(data$gender == "Female")
+sum(data$gender == "Male")
+sum(data$gender == "Other")
+``` 
+
+```{r}
+ggplot(data, aes(x=major_discipline))+
+  geom_bar(fill = "#58A4B0")+
+  geom_text(stat='count', aes(label=..count..), vjust=-1)+
+  ggtitle("Major Distribution")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  xlab("Major")
+
+```
+  
+  We have way more people in STEM than any other Major, by far as seen above (90.32%).
+  
+  I also made a plot with all the people that have a major divided by gender but it was not significative since in our data there are mostly men, therefore, anything we divide by gender is going to tell us that there are more men.
+  
+```{r}
+ggplot(data,aes(x=relevent_experience))+
+  geom_bar(fill = "#373F51")+
+  facet_wrap(~education_level)+
+  ggtitle("Relevent experience by education level")+
+  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust = 0.5))+
+  theme(plot.title = element_text(hjust = 0.5))+
+  xlab("Experience")+
+  ylab("Count")
+```
+
+  We appreciate that those with the most relevant experience are graduates from university, followed by those with a master's degree.
+
+```{r}
+ggplot(data, aes(x=major_discipline == "STEM"))+
+  geom_bar(fill = "#58A4B0")+
+  geom_text(stat='count', aes(label=..count..), vjust=-1)+
+  ggtitle("Major Distribution")+
+  facet_wrap(~enrolled_university)+
+  theme(plot.title = element_text(hjust = 0.5))+
+  xlab("Enrollement in STEM")
+
+``` 
+
+  We know that out of our candidates, 73% were not enrolled in university, so it adds up that most of them where not enrolled in STEM. But, out of those, it is more usual for them to be enrolled in the full time course rather than the part time one.
+  
+```{r}
+ggplot(data,aes(x= training_hours,fill = relevent_experience))+
+  geom_density(alpha = 0.5)
+```
+
+```{r}
+ggplot(data,aes(x= training_hours,fill = relevent_experience))+
+  geom_density(alpha = 0.5) + facet_wrap(~relevent_experience)
+```
+
+```{r}
+ggplot(data,aes(x= training_hours,fill = relevent_experience))+
+  geom_density(alpha = 0.5)+ xlim(10,70)
+```
+
+  It is basically the same training hours completed whether or not the candidate had any relevant experience. And we can see that the average of those training hours is around 20 to 30 hours.
+
+```{r}
+ggplot(data, aes(x=city_development_index, fill=relevent_experience)) +
+  geom_density(adjust=1.5, alpha=.4) +
+  theme_light()
+
+```
+
+  The ones with most relevant experience come from a city with a bigger development index, but there are also a lot of them without it. We also see that around 0.6 development index, there is a little peak with people with relevant experience. But most of the candidates are from the 0.9 city development index, too.
+  
+```{r}
+ggplot(data, aes(x=training_hours, group=education_level, fill=education_level)) +
+  geom_density(adjust=1.5, alpha = 0.5) +
+  theme_bw() + facet_wrap(~education_level)
+```
+  
+  This time, just like the relevant experience, we see that the training hours is independent of the candidate's level of education, they are mostly equal.
+
+```{r}
+ggplot(data,aes(x=education_level,fill = education_level))+
+  geom_bar()+
+  facet_wrap(~target)+
+  geom_text(stat='count', aes(label=..count..), vjust=-1,check_overlap = TRUE)+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust = 0.5))+
+  ggtitle("Target by education level")+
+  xlab("Target")+
+  ylab("Count")
+```
+
+  Now, the people that are most likely to want to leave their current job are 
+Graduates, but also they are the most likely to not want to leave it so let's check it by years of experience.
+
+```{r}
+ggplot(data,aes(x=experience,fill = experience))+
+  geom_bar()+
+  facet_wrap(~target)+
+  geom_text(stat='count', aes(label=..count..), vjust=-1,check_overlap = TRUE)+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust = 0.5))+
+  ggtitle("Target by years of experience")+
+  xlab("Target")+
+  ylab("Count")
+
+```
+
+  What is interesting to see is that the ones most likely to want to change their current job are those with more than 20 years of experience and those with 4 to 6 years of experience.
+  
+  
+# Principal Component Analysis (PCA):
+  
+  Let's change most of our variables to numeric first:
+  
+```{r}
+data$city = as.numeric(data$city)
+data$relevent_experience = as.numeric(data$relevent_experience)
+data$gender = as.numeric(data$gender)
+data$experience = as.numeric(data$experience)
+data$last_new_job = as.numeric(data$last_new_job)
+data$training_hours = as.numeric(data$training_hours)
+data$target = as.numeric(data$target)
+data$education_level = as.numeric(data$education_level)
+data$major_discipline = as.numeric(data$major_discipline)
+data$enrolled_university = as.numeric(data$enrolled_university)
+data$company_size = as.factor(data$company_size)
+data$company_size = as.numeric(data$company_size)
+
+data = select(data, -city)
+```
+
+```{r}
+corrplot(cor(data), is.corr = F,
+         number.cex = 0.4, tl.cex = 0.4, cl.cex = 0.4)
+```
+
+
+```{r}
+ggcorr(data, label = T)
+```
+
+  We do not have a really strong correlation between variables but let's keep going either way.
+
+```{r}
+pca1 = prcomp(data, scale=T)
+summary(pca1)
+```
+  We achieve a table with all the components but let's plot it so we can visually have a better insight.
+  
+```{r}
+screeplot(pca1,main="Screeplot",col="#aC5E99",type="barplot",pch=19)
+```
+
+  But is nicer and much more informative if we use the factoextra:
+
+```{r}
+fviz_screeplot(pca1, addlabels = TRUE)
+```
+
+  We see that we need most of the components to explain the variance, because just 1 explains barely the 17%.
+
+```{r}
+fviz_pca_ind(pca1, geom.ind = "point", col.ind = "#aC5E99", 
+             axes = c(1, 2), pointsize = 1.5, repel = T) 
+```
+
+  What would have happened if we scaled the data?
+  
+```{r}
+pca2 = prcomp(data, center = T, scale. = T); summary(pca2)
+```
+
+```{r}
+fviz_screeplot(pca2, addlabels = TRUE)
+```
+
+```{r}
+fviz_pca_var(pca2, col.var = "cos2", geom.var = "arrow", 
+             labelsize = 2, repel = T)
+
+```
+
+```{r}
+barplot(pca1$rotation[,1], las=2, col="#aC5E99")
+```
+
+```{r}
+barplot(pca2$rotation[,1], las=2, col="#58A4B0")
+```
+  
+  Both of them are the same and the same variance is explained either way.
+  
+```{r}
+fviz_contrib(pca1, choice = "var", axes = 2)
+```
+  
+  Here we can see the contribution depending on the variable, being the *city_development_index* the one that contributes the most, followed by *education_level* and *relevent_experience*.
+
+```{r}
+head(get_pca_ind(pca1)$contrib[,1])
+```
+
+  The contribution indices are really low.
+
+# Factor Analysis:
+  Factor Analysis and PCA are pretty similar. Both of them describe the variablity in our data. In this case, FA is a technique used to reduce a large number of variables into a fewer number of factors. The biggest difference is that FA is restricted by normality and linearity.
+  Let's use 3 factors as a default.
+
+```{r}
+factosys = factanal(data,factors = 3, rotation = "none", scores = "regression")
+factosys
+```
+
+```{r}
+cbind(factosys$loadings, factosys$uniquenesses)
+```
+
+  The first factor explains a 99% of the *target*, the second factor explains mostly the *relevent_experience* and the third one is mostly related to the *city_development_index*.
+
+```{r}
+factosys2 = factanal(data,factors =  3, rotation = "varimax", scores = "regression")
+factosys2
+```
+
+```{r}
+cbind(factosys2$loadings, factosys2$uniquenesses)
+```
+
+```{r}
+barplot(factosys$loadings[,1], names=F, las=2, col="#6633CC", ylim = c(-1, 1))
+```
+
+```{r}
+barplot(factosys$loadings[,2], names=F, las=2, col="#6633CC", ylim = c(-1, 1))
+```
+
+```{r}
+barplot(factosys$loadings[,3], las=2, col="#6633CC", ylim = c(-1, 1))
+```
+
+```{r}
+barplot(factosys2$loadings[,1], names=F, las=2, col="#FF9966", ylim = c(-1, 1))
+```
+
+```{r}
+barplot(factosys2$loadings[,2], names=F, las=2, col="#FF9966", ylim = c(-1, 1))
+```
+
+```{r}
+barplot(factosys2$loadings[,3], las=2, col="#FF9966", ylim = c(-1, 1))
+```
+
+
+# Clustering:
+  Clustering consists of grouping abstract objects into similar groups of our dataset. Firstly, we will start with kmeans with 5 centers by default.
+
+```{r}
+data_scaled= scale(data) 
+k1 = kmeans(data_scaled, centers = 5, nstart = 100) 
+k1_cluster = k1$cluster
+k1_centers = k1$centers
+
+#representation 
+barplot(table(k1_cluster), col="#9999CC", xlab = "clusters")
+```
+
+  Now, let's understand the centers:
+
+```{r}
+bar1 = barplot(k1_centers[1,], las=2, col="#9999CC",ylim = c(-2,2),
+               main= paste("Cluster 1: center (blue) and global center (pink)"))
+points(bar1, y = apply(data_scaled, 2, quantile, 0.50),col="#E85D75", pch=19)
+
+```
+
+  Now, we plot it in the second center.
+
+``` {r}
+bar2 = barplot(k1_centers[2,], las=2, col="#9999CC",ylim = c(-2,2),
+               main= paste("Cluster 1: center (blue) and global center (pink)"))
+points(bar1, y = apply(data_scaled, 2, quantile, 0.50),col="#E85D75", pch=19)
+
+```
+
+## Clusplot:
+
+``` {r}
+fviz_cluster(k1, data = data_scaled, geom  = c("point"), ellipse.type = "norm")+
+  theme_minimal()
+
+```
+
+  With the silhouette method we can check how many groups is the optimal number of centers.
+``` {r}
+#fviz_nbclust(data_scaled, kmeans, method = 'silhouette')
+#I have also tried to plot it using the silhouette function but it seems it takes a lot of capacity so I was not able to.
+
+
+```
+
+``` {r}
+#fviz_nbclust(data_scaled, kmeans, method = 'wss')
+```
+
+  My laptop is not strong enough to be able to run this since is very power consuming but let us assume that the ideal number is 3. 
+
+``` {r}
+k2 = kmeans(data_scaled, centers = 3, nstart = 100)
+k2_clusters = k2$cluster
+k2_centers = k2$centers
+
+barplot(table(k2_clusters), col="#9999CC", xlab = "clusters")
+```
+
+``` {r}
+b2 = barplot(k2_centers[3,], las = 2, col="#FFC15E",ylim = c(-2,2), xlab = "appropriate cluster", ylab = "inappropriate observations")
+points(bar2 ,y = apply(data_scaled, 2, quantile, 0.5), col ="#BF4E30", pch = 20)
+
+```
+
+``` {r}
+fviz_cluster(k2, data = data_scaled, geom  = c("point"), ellipse.type = "norm")+
+  theme_minimal()
+
+```
+
+  
+## Minkowski method:
+
+  If we use this other plot, we have less overlapping:
+  
+```{r}
+#k2_min2 = eclust(data_scaled, "kmeans", stand=T, k=3, graph = T, hc_metric = "minkowski")
+
+```
+  
+  Either way, let's try with 2 clusters:
+
+```{r}
+#k2_min2 = eclust(data_scaled, "kmeans", stand=T, k=2, graph = T, hc_metric = "minkowski")
+```
+
+  It does not run when knitted since it produces an error due to the amount of GBs required. But it did run in my computer and the one with 2 clusters the overlapping was basically non-existing.
+  
+## Profile variables:
+  The profiles are those variables not included in the clustering. So we are going to use those that we left outside since we considered that were non-relevant to better understand our clusters.
+  Let us consider 3 clusters of those 3 variables (*company_size*, *training_hours* and *education_level*):
+  
+```{r}
+fit = kmeans(data_scaled, centers=3, nstart=100)
+groups = fit$cluster
+
+# We consider first the training_hours
+
+as.data.frame(data_scaled) %>% mutate(cluster=factor(groups), company_size=company_size, min=training_hours, education_level = education_level) %>%
+  ggplot(aes(x = cluster, y = min)) + 
+  geom_boxplot(fill="lightblue") +
+  labs(title = "training hours by cluster", x = "", y = "", col = "")
+
+```
+
+  We can see in the 3 clusters, there a lot of outliers. Let's see now the company size:
+
+```{r}
+as.data.frame(data_scaled) %>% mutate(cluster=factor(groups), company_size=company_size, min=training_hours, education_level = education_level) %>%
+  ggplot(aes(x = cluster, y = company_size)) + 
+  geom_boxplot(fill="lightblue") +
+  labs(title = " company_size  by cluster", x = "", y = "", col = "")
+
+```
+
+  We see that the first cluster is actually pretty good, the other two have the median quite tilted so is not that good.
+  
+```{r}
+fviz_cluster(fit, data = data_scaled, geom  = c("point"), ellipse.type = "norm")+
+  theme_dark()
+```
+
+## Mahalanobis distance
+  The last way we are going to try is the Mahalanobis distance.This method measures the distance between a point and a distribution. It's a multidimensional method. Let us try it with 3 centers:
+
+```{r}
+fit.mahalanobis = kmeans(data_scaled, centers=3, nstart=100)
+groups_mah = fit.mahalanobis$cluster
+centers_mah=fit.mahalanobis$centers
+colnames(centers_mah)=colnames(data_scaled)
+
+fviz_cluster(fit.mahalanobis, data = data_scaled, geom = c("point"),ellipse.type = 'norm', pointsize=1)+
+  theme_minimal()
+```
+  This method is less power consuming and has a neat graphical interpretation (basically the same as the first one), both methods are valid. The only one I would left behind is the Minkowski one.
+
+# Conclusion:
+  Basically, studying the behavior of humans is always tricky since sometimes we are almost unpredictable about our desires and our future is always uncertain. Thus, is hard to know why people stay or leave a commpany depending on their background. But it was interesting to see the relations that it may cause (whether they are coincidences or not). 
+  
+  We have also learned the different methods to use in a large dataset (as in this case), and that some of them are very time and power consuming.
+
+
+
+
+
